@@ -31,6 +31,7 @@ small,.mute{color:var(--mute)} .ink2{color:var(--ink2)}
 .top .logo .ar{font-size:22px;color:#f1d9a6}
 .top .sp{flex:1} .top .who{font-size:13px;opacity:.9;text-align:right;line-height:1.2}
 .top .who b{display:block;font-size:14px}
+@media(max-width:480px){.top{gap:6px;padding:8px 10px}.top .who{font-size:0}.top .who b{font-size:13px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.top .logo{font-size:15px}.top .logo .ar{font-size:19px}#logout{padding:4px 8px;font-size:12px;min-height:30px}}
 .demo-badge{background:var(--gold);color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600}
 /* bottom nav */
 .nav{position:fixed;bottom:0;left:0;right:0;z-index:30;background:#fff;border-top:1px solid var(--line);display:flex;justify-content:space-around;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
@@ -355,7 +356,7 @@ const LISTS={
  reflType:['Realization (উপলব্ধি)','Reconciliation (মীমাংসা)','Apology given','Apology received','Forgiven (ক্ষমা)','Reframed — seeing it differently','Tawbah / du’a made','Advice taken','New information / correction','Still open'],
 };
 const LIST_LABEL={place:'Place',person:'Person',thing:'Thing',setup:'Setting',matter:'Matter',subjectRole:'Role of the subject',thinking:'Thinking pattern',body:'Body sensation',giverRole:'Input giver’s role',mindset:'Mindset at entry',reflType:'Reflection type',emotion:'Emotion'};
-function listOf(name){ const extra=S.options.filter(o=>o.list===name&&o.status!=='hidden').map(o=>o.value); const base=LISTS[name]||[]; return [...base,...extra.filter(x=>!base.some(b=>b.toLowerCase()===x.toLowerCase()))]; }
+function listOf(name){ const extra=[...S.options.filter(o=>o.list===name&&o.status!=='hidden').map(o=>o.value),...privateExtras(name)]; const base=LISTS[name]||[]; return [...base,...extra.filter(x=>!base.some(b=>b.toLowerCase()===x.toLowerCase()))]; }
 function isNewOpt(name,v){ return !(LISTS[name]||[]).some(b=>b.toLowerCase()===String(v).toLowerCase()); }
 
 /* ============================ backend ============================ */
@@ -376,7 +377,7 @@ const Demo=(()=>{
   const load=()=>LS.get('demo',{users:[],otps:[],sessions:[],events:[],revisions:[],options:[],settings:{REQUIRE_APPROVAL:'false',OTP_MODE:'relay',APP_NAME:'QALB'}});
   const save=db=>LS.set('demo',db);
   const h=(s,salt)=>{ let x=2166136261; for(const c of salt+'|'+s){ x^=c.charCodeAt(0); x=Math.imul(x,16777619);} return (x>>>0).toString(16); };
-  const pub=u=>({id:u.id,name:u.name,phone:u.phone,wa:u.wa,email:u.email||'',status:u.status,role:u.role,createdAt:u.createdAt,lastLogin:u.lastLogin});
+  const pub=u=>({id:u.id,name:u.name,phone:u.phone,wa:u.wa,email:u.email||'',privacy:u.privacy||'',status:u.status,role:u.role,createdAt:u.createdAt,lastLogin:u.lastLogin});
   const fail=m=>{ throw new Error(m); };
   function auth(db,t,adm){ const s=db.sessions.find(s=>s.token===t&&new Date(s.expires)>new Date()); if(!s) fail('Session expired — please log in again.'); const u=db.users.find(u=>u.id===s.userId); if(!u) fail('Session expired'); if(u.status==='blocked') fail('Your access has been blocked by the admin.'); if(adm&&u.role!=='admin') fail('Admin only'); return u; }
   function addOpt(db,list,value,by){ value=String(value||'').trim(); if(!list||!value) return; if(!db.options.some(o=>o.list===list&&o.value.toLowerCase()===value.toLowerCase())) db.options.push({id:uid('o'),list,value,addedBy:by,addedAt:new Date().toISOString(),status:'new',mapTo:''}); }
@@ -402,17 +403,23 @@ const Demo=(()=>{
    _sess(u,db){ const t=uid('t')+uid(); db.sessions.push({token:t,userId:u.id,expires:new Date(Date.now()+30*864e5).toISOString()}); u.lastLogin=new Date().toISOString(); return {ok:true,token:t,user:pub(u)}; },
    login(p,db){ const u=db.users.find(u=>u.phone===normPhone(p.phone)); if(!u||!u.pinHash) fail('No account with this number. Register first.'); if(u.status==='blocked') fail('Your access has been blocked by the admin.'); if(h(String(p.pin),u.salt)!==u.pinHash) fail('Wrong PIN.'); return A._sess(u,db); },
    logout(p,db){ const s=db.sessions.find(s=>s.token===p.token); if(s) s.expires=new Date(0).toISOString(); return {ok:true}; },
-   bootstrap(p,db){ const u=auth(db,p.token); return {ok:true,user:pub(u),events:db.events.filter(e=>e.userId===u.id&&e.status!=='deleted').map(evOut),options:db.options,settings:{appName:'QALB'}}; },
-   saveEvent(p,db){ const u=auth(db,p.token); if(u.status!=='active') fail('Your account is waiting for admin approval.'); const e=Object.assign({},p.event); const ts=new Date().toISOString();
+   bootstrap(p,db){ const u=auth(db,p.token); return {ok:true,user:Object.assign(pub(u),{encSalt:u.encSalt||'',encCheck:u.encCheck||''}),events:db.events.filter(e=>e.userId===u.id&&e.status!=='deleted').map(evOut),options:db.options,settings:{appName:'QALB'}}; },
+   saveEvent(p,db){ const u=auth(db,p.token); if(u.status!=='active') fail('Your account is waiting for admin approval.'); const e=Object.assign({},p.event); const ts=new Date().toISOString(); if(u.privacy==='private'&&!e._enc) fail('Private mode: this entry was not encrypted, so it was not saved.');
      let r=e.id&&db.events.find(x=>x.id===e.id); if(r&&r.userId!==u.id&&u.role!=='admin') fail('Not your event');
      const keep=Object.assign({},e); ['id','userId','createdAt','updatedAt'].forEach(k=>delete keep[k]);
      if(r){ Object.assign(r,{updatedAt:ts,status:e.status||'open',json:JSON.stringify(keep)}); if(p.revision) db.revisions.push({eventId:r.id,userId:u.id,ts,reason:p.revision.reason,changes:p.revision.changes}); }
      else { r={id:uid('e'),userId:u.id,createdAt:ts,updatedAt:ts,status:e.status||'open',json:JSON.stringify(keep)}; db.events.push(r); }
-     (p.newOptions||[]).forEach(o=>addOpt(db,o.list,o.value,u.id)); return {ok:true,event:evOut(r),options:db.options}; },
+     if(u.privacy!=='private') (p.newOptions||[]).forEach(o=>addOpt(db,o.list,o.value,u.id)); return {ok:true,event:evOut(r),options:db.options}; },
+   setPrivacy(p,db){ const u=auth(db,p.token); const mode=p.mode==='private'?'private':'shared';
+     (p.events||[]).forEach(e=>{ if(mode==='private'&&!e._enc) fail('An entry was not encrypted.'); if(mode==='shared'&&e._enc) fail('An entry is still locked.'); });
+     (p.events||[]).forEach(e=>{ const r=db.events.find(x=>x.id===e.id&&x.userId===u.id); if(!r) return; const k=Object.assign({},e); ['id','userId','createdAt','updatedAt'].forEach(x=>delete k[x]); r.json=JSON.stringify(k); r.status=e.status||r.status; });
+     if(mode==='private') db.revisions.forEach(x=>{ if(db.events.some(e=>e.id===x.eventId&&e.userId===u.id)){ x.reason='cleared'; x.changes=[]; } });
+     u.privacy=mode; u.encSalt=mode==='private'?p.encSalt:''; u.encCheck=mode==='private'?p.encCheck:''; return {ok:true}; },
+   privacyReset(p,db){ const u=auth(db,p.token); let n=0; db.events.forEach(e=>{ if(e.userId===u.id&&e.status!=='deleted'){ e.status='deleted'; e.json='{}'; n++; } }); u.privacy=''; u.encSalt=''; u.encCheck=''; return {ok:true,removed:n}; },
    deleteEvent(p,db){ const u=auth(db,p.token); const r=db.events.find(x=>x.id===p.id); if(!r) fail('Not found'); if(r.userId!==u.id&&u.role!=='admin') fail('Not your event'); r.status='deleted'; return {ok:true}; },
    revisions(p,db){ auth(db,p.token); return {ok:true,revisions:db.revisions.filter(x=>x.eventId===p.id)}; },
    addOption(p,db){ const u=auth(db,p.token); addOpt(db,p.list,p.value,u.id); return {ok:true,options:db.options}; },
-   adminData(p,db){ auth(db,p.token,1); return {ok:true,users:db.users.map(pub),otps:db.otps.filter(o=>o.delivered==='pending'&&new Date(o.expires)>new Date()),events:db.events.filter(e=>e.status!=='deleted').map(evOut),options:db.options,settings:db.settings,waReady:false,otpMode:'relay'}; },
+   adminData(p,db){ auth(db,p.token,1); return {ok:true,users:db.users.map(pub),otps:db.otps.filter(o=>o.delivered==='pending'&&new Date(o.expires)>new Date()),events:db.events.filter(e=>e.status!=='deleted').map(r=>{ const ow=db.users.find(x=>x.id===r.userId); return ow&&ow.privacy==='private'?{id:r.id,userId:r.userId,createdAt:r.createdAt,updatedAt:r.updatedAt,status:r.status,private:true,when:{date:(JSON.parse(r.json).when||{}).date||''}}:evOut(r); }),options:db.options,settings:db.settings,waReady:false,otpMode:'relay'}; },
    adminUser(p,db){ const me=auth(db,p.token,1); const u=db.users.find(u=>u.id===p.userId); if(!u) fail('User not found');
      ({approve:()=>u.status='active',unblock:()=>u.status='active',block:()=>{ if(u.id===me.id) fail('You cannot block yourself'); u.status='blocked'; },resetPin:()=>{u.pinHash='';},unlock:()=>{},makeAdmin:()=>u.role='admin',removeAdmin:()=>{ if(u.id===me.id) fail('You cannot remove your own admin role'); u.role='user'; },rename:()=>u.name=p.name||u.name}[p.op]||(()=>fail('Unknown op')))(); return {ok:true}; },
    adminOtpSent(p,db){ auth(db,p.token,1); db.otps.forEach(o=>{ if(o.phone===normPhone(p.phone)&&o.delivered==='pending') o.delivered='relayed'; }); return {ok:true}; },
@@ -424,9 +431,57 @@ const Demo=(()=>{
   return {handle(p){ return new Promise((res,rej)=>setTimeout(()=>{ const db=load(); try{ const f=A[p.action]; if(!f||p.action[0]==='_') throw new Error('Unknown action'); const out=f(p,db); save(db); res(clone(out)); }catch(e){ rej(e); } },120)); }};
 })();
 
+/* ============================ privacy / encryption ============================
+   Private users: every entry is encrypted in this browser with AES-GCM-256.
+   The key comes from the user's passphrase (PBKDF2-SHA256, 210,000 rounds) and never leaves the device. */
+const CR=(()=>{
+  const te=new TextEncoder(), td=new TextDecoder();
+  const b64=buf=>{ const u=new Uint8Array(buf); let s=''; for(let i=0;i<u.length;i+=0x8000) s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000)); return btoa(s); };
+  const ub=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+  const ok=()=>!!(window.crypto&&crypto.subtle);
+  async function derive(pass,salt){ const base=await crypto.subtle.importKey('raw',te.encode(pass),'PBKDF2',false,['deriveKey']);
+    return crypto.subtle.deriveKey({name:'PBKDF2',salt:ub(salt),iterations:210000,hash:'SHA-256'},base,{name:'AES-GCM',length:256},true,['encrypt','decrypt']); }
+  async function encrypt(key,obj){ const iv=crypto.getRandomValues(new Uint8Array(12)); const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,te.encode(JSON.stringify(obj))); return {v:1,iv:b64(iv),ct:b64(ct)}; }
+  async function decrypt(key,box){ const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:ub(box.iv)},key,ub(box.ct)); return JSON.parse(td.decode(pt)); }
+  const newSalt=()=>b64(crypto.getRandomValues(new Uint8Array(16)));
+  const exportKey=async k=>b64(await crypto.subtle.exportKey('raw',k));
+  const importKey=raw=>crypto.subtle.importKey('raw',ub(raw),{name:'AES-GCM'},true,['encrypt','decrypt']);
+  return {ok,derive,encrypt,decrypt,newSalt,exportKey,importKey};
+})();
+const KEY_CHECK='QALB-KEY-OK';
+const isPriv=()=>!!(S.user&&S.user.privacy==='private');
+const keySlot=()=>'qalb:k:'+(S.user&&S.user.id);
+async function rememberKey(key,persist){ const raw=await CR.exportKey(key); try{ sessionStorage.setItem(keySlot(),raw); if(persist) localStorage.setItem(keySlot(),raw); }catch(e){} }
+function forgetKey(){ try{ sessionStorage.removeItem(keySlot()); localStorage.removeItem(keySlot()); }catch(e){} S.key=null; }
+async function verifyKey(key){ try{ return (await CR.decrypt(key,JSON.parse(S.user.encCheck)))===KEY_CHECK; }catch(e){ return false; } }
+async function storedKey(){ let raw=null; try{ raw=sessionStorage.getItem(keySlot())||localStorage.getItem(keySlot()); }catch(e){}
+  if(!raw) return null; try{ const k=await CR.importKey(raw); if(await verifyKey(k)) return k; }catch(e){} forgetKey(); return null; }
+async function sealEvent(e,key){ const body=Object.assign({},e); ['id','userId','createdAt','updatedAt'].forEach(k=>delete body[k]);
+  return {id:e.id, status:e.status||'open', when:{date:(e.when&&e.when.approx!=='unknown'&&e.when.date)||''}, _enc:await CR.encrypt(key||S.key,body)}; }
+async function openEvent(r,key){ if(!r||!r._enc) return r; const body=await CR.decrypt(key||S.key,r._enc);
+  return Object.assign(body,{id:r.id,userId:r.userId,createdAt:r.createdAt,updatedAt:r.updatedAt,status:r.status||body.status}); }
+/* Every save goes through here, so a private user's entry is always encrypted before it leaves the device. */
+async function saveEv(e,extra){
+  extra=extra||{}; let payload=e, rev=extra.revision||null, opts=extra.newOptions||[];
+  if(isPriv()){ if(!S.key) throw new Error('Your private entries are locked. Unlock first.');
+    payload=await sealEvent(e); if(rev) rev={reason:'🔒 private', changes:[{_enc:await CR.encrypt(S.key,rev)}]}; opts=[]; }
+  const r=await call('saveEvent',{event:payload,revision:rev,newOptions:opts});
+  const ev=await openEvent(r.event); upsertLocal(ev); if(r.options) S.options=r.options; return ev;
+}
+async function loadEvents(raw){ S.events=[]; S.badEvents=0; for(const r of raw||[]){ try{ S.events.push(await openEvent(r)); }catch(e){ S.badEvents++; } } }
+/* Private users' own list items (people, places…) stay inside their encrypted entries, not in the shared lists. */
+function privateExtras(name){ if(!isPriv()) return []; const out=new Set();
+  S.events.forEach(e=>{ const r=e.related||{}, g=e.giver||{};
+    if(name==='place') out.add(e.place&&e.place.type);
+    if(['person','thing','setup','matter'].includes(name)&&(r.kind===name||(r.kind==='open'&&name==='person'))) (r.items||[]).forEach(x=>out.add(x));
+    if(name==='subjectRole') out.add(r.subjectRole); if(name==='thinking') (e.thinking||[]).forEach(x=>out.add(x)); if(name==='body') (e.body||[]).forEach(x=>out.add(x));
+    if(name==='giverRole') out.add(g.role); if(name==='mindset') (g.mindset||[]).forEach(x=>out.add(x)); if(name==='reflType') (e.reflections||[]).forEach(x=>out.add(x.type));
+    if(name==='emotion') out.add(e.feeling&&e.feeling.primary); });
+  return [...out].filter(Boolean); }
+
 /* ============================ state ============================ */
 const S={token:LS.get('token',''),user:null,events:[],options:[],admin:null,route:'home',param:'',filters:{emo:'',flag:'',status:'',q:''},quranEmo:'',adminTab:'overview',adminUserSel:''};
-function logoutLocal(){ S.token=''; S.user=null; LS.del('token'); renderAuth('welcome'); }
+function logoutLocal(){ try{ sessionStorage.removeItem(keySlot()); }catch(e){} S.key=null; S.events=[]; S.raw=[]; S.admin=null; S.token=''; S.user=null; LS.del('token'); renderAuth('welcome'); }
 
 /* ============================ auth UI ============================ */
 const AU={step:'welcome',cc:'880',waCc:'880',phone:'',name:'',wa:'',sameWa:true,channel:'whatsapp',email:'',purpose:'register',setupToken:'',pin:'',pin1:'',err:'',info:null,busy:false};
@@ -448,7 +503,7 @@ function renderAuth(step){
       (AU.channel==='email'?'<label class="f">Email address <span class="bn">ইমেইল</span></label><input class="in" id="aEmail" type="email" inputmode="email" autocomplete="email" placeholder="name@gmail.com" value="'+esc(AU.email)+'">'+(reg?'':'<div class="hint">Use the email you registered with.</div>'):'')+
       (reg&&AU.channel==='whatsapp'?'<label class="row" style="margin-top:10px;font-size:13.5px;gap:6px"><input type="checkbox" id="aSame" '+(AU.sameWa?'checked':'')+'> My WhatsApp number is the same</label>'+
         '<div id="waBox" class="'+(AU.sameWa?'hidden':'')+'"><label class="f">WhatsApp number <span class="bn">হোয়াটসঅ্যাপ</span></label>'+phoneField('aWa','aWaCc',AU.wa,AU.waCc)+'</div>':'')+
-      '<div class="hint">'+(AU.channel==='email'?'A 6-digit code will be emailed to you instantly. Check Spam if you don’t see it.':'A 6-digit code will be sent to your WhatsApp.')+'</div>'+(AU.step==='register'?'<div class="note" style="font-size:12.5px">Your entries are stored privately in the admin’s Google Sheet. Only you and the admin can see them. <span class="bn">আপনার তথ্য শুধু আপনি ও অ্যাডমিন দেখতে পাবেন।</span></div>':'')+
+      '<div class="hint">'+(AU.channel==='email'?'A 6-digit code will be emailed to you instantly. Check Spam if you don’t see it.':'A 6-digit code will be sent to your WhatsApp.')+'</div>'+(AU.step==='register'?'<div class="note" style="font-size:12.5px">After verifying, you choose who can read your entries: <b>only you</b> (Private, locked with your own passphrase) or <b>you and the admin</b> (Shared). <span class="bn">যাচাইয়ের পর বেছে নেবেন: শুধু আপনি (প্রাইভেট) অথবা আপনি ও অ্যাডমিন (শেয়ারড)।</span></div>':'')+
       '<div class="err">'+esc(AU.err)+'</div>'+
       '<button class="btn block" id="aSend" '+(AU.busy?'disabled':'')+'>'+(AU.busy?'Sending…':(AU.channel==='email'?'Email me the code':'Send WhatsApp code'))+'</button>'+
       '<button class="linkbtn" data-go="welcome" style="margin-top:8px">← Back</button>';
@@ -535,8 +590,14 @@ function startSession(r){ S.token=r.token; LS.set('token',r.token); LS.set('last
 async function boot(){
   if(!S.token){ const lp=LS.get('lastPhone',''); AU.cc=guessCc(lp); AU.phone=localPart(lp); return renderAuth('welcome'); }
   $('#app').innerHTML='<div class="spin"></div>';
-  try{ const r=await call('bootstrap'); S.user=r.user; S.events=r.events||[]; S.options=r.options||[]; document.body.classList.remove('authmode'); route(); }
-  catch(e){ S.token=''; LS.del('token'); AU.err=e.message; { const lp=LS.get('lastPhone',''); AU.cc=guessCc(lp); AU.phone=localPart(lp); } renderAuth('login'); }
+  let r;
+  try{ r=await call('bootstrap'); }
+  catch(e){ S.token=''; LS.del('token'); AU.err=e.message; { const lp=LS.get('lastPhone',''); AU.cc=guessCc(lp); AU.phone=localPart(lp); } return renderAuth('login'); }
+  S.user=r.user; S.options=r.options||[]; S.raw=r.events||[];
+  if(!S.user.privacy) return renderPrivacy('choose');
+  if(isPriv()){ if(!CR.ok()) return renderPrivacy('nocrypto'); S.key=S.key||await storedKey(); if(!S.key) return renderPrivacy('unlock'); }
+  await loadEvents(S.raw); document.body.classList.remove('authmode'); $('#app').innerHTML=''; route();
+  if(S.badEvents) toast(S.badEvents+' entr'+(S.badEvents>1?'ies':'y')+' could not be unlocked with this key.',5000);
 }
 addEventListener('hashchange',()=>{ if(S.user) route(); });
 function go(h){ if(location.hash==='#/'+h) route(); else location.hash='#/'+h; }
@@ -546,7 +607,7 @@ function route(){
   renderShell();
   const main=$('#main');
   if(S.user.status==='pending' && !['quran'].includes(r)){ main.innerHTML='<div class="card"><h2>Waiting for approval</h2><p class="ink2">Your number is verified. The admin will approve your account shortly. Meanwhile you can read the Qur’an emotion verses.</p><button class="btn" onclick="go(\'quran\')">Open Qur’an verses</button></div>'; return; }
-  ({home:renderHome,new:renderWizard,edit:renderWizard,events:renderEvents,event:renderEvent,quran:renderQuran,admin:renderAdmin}[r]||renderHome)(main);
+  ({home:renderHome,new:renderWizard,edit:renderWizard,events:renderEvents,event:renderEvent,quran:renderQuran,admin:renderAdmin,privacy:renderPrivacyPage}[r]||renderHome)(main);
   scrollTo({top:0});
 }
 const IC={
@@ -560,6 +621,7 @@ function renderShell(){
   if($('#main')){ $$('.nav [data-r]').forEach(b=>b.setAttribute('aria-current',String(b.dataset.r===S.route||(S.route==='event'&&b.dataset.r==='events')))); return; }
   const u=S.user; const nb=(r,l)=>'<button data-r="'+r+'" aria-current="false" class="'+(r==='new'?'plus':'')+'" aria-label="'+l+'">'+IC[r==='new'?'plus':r]+(r==='new'?'':'<span>'+l+'</span>')+'</button>';
   $('#app').innerHTML='<header class="top"><div class="logo"><span class="ar">قَلْب</span>QALB</div>'+(DEMO?'<span class="demo-badge">DEMO</span>':'')+'<div class="sp"></div>'+
+    '<a href="#/privacy" class="demo-badge" style="text-decoration:none;background:'+(isPriv()?'#2e7d4f':'rgba(255,255,255,.18)')+'" title="Who can read your entries">'+(isPriv()?'🔒 Private':'Shared')+'</a>'+
     '<div class="who"><b>'+esc(u.name)+'</b>'+(u.role==='admin'?'Admin · ':'')+'+'+esc(u.phone)+'</div><button class="btn sm ghost" id="logout" style="color:#fff;border-color:rgba(255,255,255,.4)">Log out</button></header>'+
     '<nav class="nav">'+nb('home','Dashboard')+nb('events','Events')+nb('new','New')+nb('quran','Qur’an')+(u.role==='admin'?nb('admin','Admin'):'')+'</nav><main class="wrap" id="main"></main>';
   $$('.nav [data-r]').forEach(b=>b.onclick=()=>go(b.dataset.r==='new'?'new':b.dataset.r));
@@ -670,7 +732,7 @@ function chips(list,selected,single,path){
   return '<div class="chips" data-chips="'+list+'" data-path="'+path+'" data-single="'+(single?1:0)+'">'+all.map(v=>'<button type="button" class="chip" data-v="'+esc(v)+'" aria-pressed="'+sel.includes(v)+'">'+esc(v)+'</button>').join('')+
     '</div><div class="addrow"><input class="in" placeholder="+ Add your own" data-addfor="'+list+'" data-path="'+path+'" data-single="'+(single?1:0)+'"><button class="btn soft sm" data-addbtn="'+list+'">Add</button></div>';
 }
-function allEmotionKeys(){ const b=Q.CATS.filter(c=>c.key!=='divine').map(c=>c.key); const ex=S.options.filter(o=>o.list==='emotion'&&o.status!=='hidden').map(o=>o.value).filter(v=>!b.includes(v)); return [...b,...ex]; }
+function allEmotionKeys(){ const b=Q.CATS.filter(c=>c.key!=='divine').map(c=>c.key); const ex=[...new Set([...S.options.filter(o=>o.list==='emotion'&&o.status!=='hidden').map(o=>o.value),...privateExtras('emotion')])].filter(v=>!b.includes(v)); return [...b,...ex]; }
 function emoChoices(cur,sug,kind,arr,primary){
   return allEmotionKeys().filter(k=>kind!=='secondary'||k!==primary).map(k=>{ const m=emoMeta(k); const on=kind==='primary'?cur===k:(arr||[]).includes(k);
     return '<button type="button" class="emo '+(kind==='secondary'?'sec':'')+'" data-emo="'+esc(k)+'" data-kind="'+kind+'" aria-pressed="'+on+'">'+(sug.includes(k)?'<span class="fitdot">fits</span>':'')+
@@ -736,8 +798,8 @@ async function saveWizard(){
     e.edits=[...(e.edits||[]),{at:new Date().toISOString(),by:S.user.id,reason:reason.trim(),fields:ch.map(c=>c.field)}];
     revision={reason:reason.trim(),changes:ch}; }
   const btn=$('#wSave'); btn.disabled=true; btn.textContent='Saving…';
-  try{ const r=await call('saveEvent',{event:e,revision,newOptions:W.newOpts}); upsertLocal(r.event); if(r.options) S.options=r.options;
-    if(!editing) LS.del('draft'); W=null; toast(editing?'Changes saved':'Event saved'); go('event/'+r.event.id); }
+  try{ const ev=await saveEv(e,{revision,newOptions:W.newOpts});
+    if(!editing) LS.del('draft'); W=null; toast(editing?'Changes saved':'Event saved'); go('event/'+ev.id); }
   catch(err){ btn.disabled=false; btn.textContent='Save'; toast(err.message,4000); }
 }
 function upsertLocal(ev){ const i=S.events.findIndex(x=>x.id===ev.id); if(ev.userId!==S.user.id){ if(S.admin){ const j=S.admin.events.findIndex(x=>x.id===ev.id); if(j>=0) S.admin.events[j]=ev; } return; } if(i>=0) S.events[i]=ev; else S.events.push(ev); }
@@ -787,9 +849,9 @@ function renderEvent(main){
   $('#delEv').onclick=async()=>{ if(!confirmBox('Delete this event? It is kept in the audit log.')) return; try{ await call('deleteEvent',{id:e.id}); S.events=S.events.filter(x=>x.id!==e.id); if(S.admin) S.admin.events=S.admin.events.filter(x=>x.id!==e.id); toast('Deleted'); go('events'); }catch(err){ toast(err.message); } };
   $('#addRefl').onclick=()=>reflModal(e);
   const mv=$('#moreV'); if(mv) mv.onclick=()=>{ W_SHOW[e.id]=(W_SHOW[e.id]||6)+10; renderEvent(main); };
-  main.querySelectorAll('[data-pin]').forEach(b=>b.onclick=async()=>{ const k=b.dataset.pin; e.verses=pinned.has(k)?(e.verses||[]).filter(x=>x!==k):[...(e.verses||[]),k]; try{ const r=await call('saveEvent',{event:e}); upsertLocal(r.event); renderEvent(main); }catch(err){ toast(err.message); } });
+  main.querySelectorAll('[data-pin]').forEach(b=>b.onclick=async()=>{ const k=b.dataset.pin; e.verses=pinned.has(k)?(e.verses||[]).filter(x=>x!==k):[...(e.verses||[]),k]; try{ await saveEv(e); renderEvent(main); }catch(err){ toast(err.message); } });
   const fx=$('#fixFlag'); if(fx) fx.onclick=()=>flagModal(e);
-  const sr=$('#showRev'); if(sr) sr.onclick=async()=>{ sr.disabled=true; try{ const r=await call('revisions',{id:e.id}); $('#revBox').innerHTML=r.revisions.map(x=>'<div class="note" style="background:#fff;border-color:var(--line)"><b>'+fmtDT(x.ts)+'</b> — '+esc(x.reason)+'<table class="t" style="margin-top:6px"><tr><th>Field</th><th>Before</th><th>After</th></tr>'+(x.changes||[]).map(c=>'<tr><td>'+esc(c.field)+'</td><td>'+esc(fmtVal(c.field,c.from))+'</td><td>'+esc(fmtVal(c.field,c.to))+'</td></tr>').join('')+'</table></div>').join('')||'<div class="hint">No revision rows found.</div>'; }catch(err){ toast(err.message); } };
+  const sr=$('#showRev'); if(sr) sr.onclick=async()=>{ sr.disabled=true; try{ const r=await call('revisions',{id:e.id}); for(const x of r.revisions){ const c0=(x.changes||[])[0]; if(c0&&c0._enc){ try{ const d=await CR.decrypt(S.key,c0._enc); x.reason=d.reason; x.changes=d.changes; }catch(err){ x.reason='🔒 (cannot unlock)'; x.changes=[]; } } } $('#revBox').innerHTML=r.revisions.map(x=>'<div class="note" style="background:#fff;border-color:var(--line)"><b>'+fmtDT(x.ts)+'</b> — '+esc(x.reason)+'<table class="t" style="margin-top:6px"><tr><th>Field</th><th>Before</th><th>After</th></tr>'+(x.changes||[]).map(c=>'<tr><td>'+esc(c.field)+'</td><td>'+esc(fmtVal(c.field,c.from))+'</td><td>'+esc(fmtVal(c.field,c.to))+'</td></tr>').join('')+'</table></div>').join('')||'<div class="hint">No revision rows found.</div>'; }catch(err){ toast(err.message); } };
 }
 const W_SHOW={};
 const cap=s=>s?s[0].toUpperCase()+s.slice(1):'';
@@ -808,7 +870,7 @@ function flagModal(e){
   s=>{ s.querySelector('#fCancel').onclick=closeModal; s.querySelector('#fEdit').onclick=()=>{ closeModal(); go('edit/'+e.id); };
     s.querySelector('#fKeep').onclick=async()=>{ const n=s.querySelector('#fNote').value.trim(); if(!n){ toast('Write a short explanation'); return; }
       e.check=Object.assign({},e.check,{flag:'explained',resolution:{action:'kept',note:n,at:new Date().toISOString(),by:S.user.id}});
-      try{ const r=await call('saveEvent',{event:e}); upsertLocal(r.event); closeModal(); route(); toast('Explanation saved'); }catch(err){ toast(err.message); } }; });
+      try{ await saveEv(e); closeModal(); route(); toast('Explanation saved'); }catch(err){ toast(err.message); } }; });
 }
 function reflModal(e){
   let R={type:'',note:'',emotion:e.feeling.primary,intensity:e.feeling.intensity,status:e.status};
@@ -828,7 +890,7 @@ function reflModal(e){
     s.querySelector('#rCancel').onclick=closeModal;
     s.querySelector('#rSave').onclick=async()=>{ sync(); if(!R.type){ toast('Choose what kind'); return; }
       e.reflections=[...(e.reflections||[]),{id:uid('r'),at:new Date().toISOString(),by:S.user.id,type:R.type,note:R.note.trim(),emotion:R.emotion,intensity:R.intensity}]; e.status=R.status;
-      try{ const r=await call('saveEvent',{event:e,newOptions:R._new?[{list:'reflType',value:R._new}]:[]}); upsertLocal(r.event); if(r.options) S.options=r.options; closeModal(); route(); toast('Saved'); }catch(err){ toast(err.message); } }; }); };
+      try{ await saveEv(e,{newOptions:R._new?[{list:'reflType',value:R._new}]:[]}); closeModal(); route(); toast('Saved'); }catch(err){ toast(err.message); } }; }); };
   draw();
 }
 
@@ -1001,7 +1063,7 @@ function renderQuran(main){
 const QLIM={}; let QQ='';
 
 /* ============================ admin ============================ */
-async function loadAdmin(force){ if(S.admin&&!force) return S.admin; S.admin=await call('adminData'); return S.admin; }
+async function loadAdmin(force){ if(S.admin&&!force) return S.admin; const a=await call('adminData'); a.allEvents=a.events; a.events=a.events.filter(e=>!e.private); S.admin=a; return S.admin; }
 async function renderAdmin(main){
   if(S.user.role!=='admin'){ main.innerHTML='<div class="empty">Admin only.</div>'; return; }
   if(!S.admin) main.innerHTML='<div class="spin"></div>';
@@ -1012,12 +1074,14 @@ async function renderAdmin(main){
   const t=S.adminTab, uname=id=>(A.users.find(u=>u.id===id)||{}).name||'—';
   if(t==='overview'){
     const act=A.users.filter(u=>u.status==='active').length;
+    const nPriv=A.users.filter(u=>u.privacy==='private').length;
+    if(nPriv) h+='<div class="note" style="margin-top:0;margin-bottom:12px">🔒 '+nPriv+' user'+(nPriv>1?'s have':' has')+' chosen Private. Their '+(A.allEvents.length-A.events.length)+' entries are encrypted and are not included in the charts, flags or exports below.</div>';
     h+='<div class="kpis">'+kpi(A.users.length,'users',act+' active · '+pendU+' pending')+kpi(A.events.length,'events (all users)',A.events.filter(e=>daysAgo(e.createdAt)<7).length+' this week')+kpi(flags,'open mismatch flags','')+kpi(A.otps.length,'OTP waiting to send',A.otpMode==='whatsapp'?'auto via WhatsApp API':'admin relay mode')+kpi(newOpt,'new list items','review in Lists')+'</div>';
     h+='<div class="card" style="margin-top:12px"><div class="sectitle"><h3>All users — combined view</h3><button class="btn sm ghost" id="expAll">Export all events CSV</button></div>'+dashboardHtml(A.events,'All users',false).replace(/<div class="card" style="margin-top:12px"><div class="sectitle"><h3>Recent events[\s\S]*$/,'')+'</div>';
-    h+='<div class="card"><h3>Users by activity</h3>'+bars(A.users.map(u=>[u.name,A.events.filter(e=>e.userId===u.id).length,'']).sort((a,b)=>b[1]-a[1]).slice(0,12))+'</div>';
+    h+='<div class="card"><h3>Users by activity</h3>'+bars(A.users.map(u=>[(u.privacy==='private'?'🔒 ':'')+u.name,A.allEvents.filter(e=>e.userId===u.id).length,'']).sort((a,b)=>b[1]-a[1]).slice(0,12))+'</div>';
   }
   if(t==='users'){
-    h+='<div class="card tscroll"><table class="t"><tr><th>Name</th><th>Phone / WhatsApp / Email</th><th>Status</th><th>Events</th><th>Last login</th><th></th></tr>'+A.users.map(u=>'<tr><td><b>'+esc(u.name)+'</b>'+(u.role==='admin'?' <span class="tag gold">admin</span>':'')+'</td><td>+'+esc(u.phone)+(u.wa&&u.wa!==u.phone?'<br><small>WA +'+esc(u.wa)+'</small>':'')+(u.email?'<br><small>✉ '+esc(u.email)+'</small>':'')+'</td><td>'+({active:'<span class="tag ok">active</span>',pending:'<span class="tag warn">pending</span>',blocked:'<span class="tag flag">blocked</span>'}[u.status]||esc(u.status))+'</td><td>'+A.events.filter(e=>e.userId===u.id).length+'</td><td>'+fmtDT(u.lastLogin)+'</td><td><div class="row" style="gap:4px">'+
+    h+='<div class="card tscroll"><table class="t"><tr><th>Name</th><th>Phone / WhatsApp / Email</th><th>Status</th><th>Events</th><th>Last login</th><th></th></tr>'+A.users.map(u=>'<tr><td><b>'+esc(u.name)+'</b>'+(u.role==='admin'?' <span class="tag gold">admin</span>':'')+'<br>'+(u.privacy==='private'?'<span class="tag ok">🔒 Private</span>':u.privacy==='shared'?'<span class="tag">Shared</span>':'<span class="tag warn">not chosen</span>')+'</td><td>+'+esc(u.phone)+(u.wa&&u.wa!==u.phone?'<br><small>WA +'+esc(u.wa)+'</small>':'')+(u.email?'<br><small>✉ '+esc(u.email)+'</small>':'')+'</td><td>'+({active:'<span class="tag ok">active</span>',pending:'<span class="tag warn">pending</span>',blocked:'<span class="tag flag">blocked</span>'}[u.status]||esc(u.status))+'</td><td>'+A.allEvents.filter(e=>e.userId===u.id).length+'</td><td>'+fmtDT(u.lastLogin)+'</td><td><div class="row" style="gap:4px">'+
       (u.status==='pending'?'<button class="btn sm" data-uop="approve" data-u="'+u.id+'">Approve</button>':'')+(u.status==='blocked'?'<button class="btn sm soft" data-uop="unblock" data-u="'+u.id+'">Unblock</button>':'<button class="btn sm ghost" data-uop="block" data-u="'+u.id+'">Block</button>')+
       '<button class="btn sm ghost" data-uop="resetPin" data-u="'+u.id+'" title="User must verify again (WhatsApp or email) and set a new PIN">Reset PIN</button>'+(u.role==='admin'?'<button class="btn sm ghost" data-uop="removeAdmin" data-u="'+u.id+'">Remove admin</button>':'<button class="btn sm ghost" data-uop="makeAdmin" data-u="'+u.id+'">Make admin</button>')+
       '<button class="btn sm soft" data-prof="'+u.id+'">Profile</button><a class="btn sm ghost" target="_blank" rel="noopener" href="https://wa.me/'+esc(u.wa||u.phone)+'">WhatsApp</a></div></td></tr>').join('')+'</table></div>';
@@ -1031,9 +1095,12 @@ async function renderAdmin(main){
   if(t==='profile'){
     const uid=S.adminUserSel||(A.users[0]||{}).id; S.adminUserSel=uid; const u=A.users.find(x=>x.id===uid);
     const evs=A.events.filter(e=>e.userId===uid);
-    h+='<div class="card"><label class="f" style="margin-top:0">Choose a profile</label><select class="in" id="profSel">'+A.users.map(x=>'<option value="'+x.id+'"'+(x.id===uid?' selected':'')+'>'+esc(x.name)+' (+'+esc(x.phone)+') — '+A.events.filter(e=>e.userId===x.id).length+' events</option>').join('')+'</select>'+
-      '<div class="row" style="margin-top:8px"><button class="btn sm ghost" id="expProf">Export this profile CSV</button></div></div>';
-    h+='<div style="margin-top:12px">'+(u?dashboardHtml(evs,u.name,false):'')+'</div>';
+    h+='<div class="card"><label class="f" style="margin-top:0">Choose a profile</label><select class="in" id="profSel">'+A.users.map(x=>'<option value="'+x.id+'"'+(x.id===uid?' selected':'')+'>'+(x.privacy==='private'?'🔒 ':'')+esc(x.name)+' (+'+esc(x.phone)+') — '+A.allEvents.filter(e=>e.userId===x.id).length+' events</option>').join('')+'</select>'+
+      (u&&u.privacy==='private'?'':'<div class="row" style="margin-top:8px"><button class="btn sm ghost" id="expProf">Export this profile CSV</button></div>')+'</div>';
+    if(u&&u.privacy==='private'){ const pe=A.allEvents.filter(e=>e.userId===uid); const ds=pe.map(e=>e.when&&e.when.date).filter(Boolean).sort();
+      h+='<div class="card" style="margin-top:12px"><h3>🔒 '+esc(u.name)+' chose Private</h3><p class="ink2">Their entries are encrypted on their own device. Only they can read them — not you, and not anyone with the Google Sheet.</p>'+
+        '<div class="kpis">'+kpi(pe.length,'entries','content locked')+kpi(pe.filter(e=>e.status!=='resolved').length,'open / ongoing','')+kpi(ds[0]?fmtDate(ds[0]):'—','first event date','')+kpi(ds.length?fmtDate(ds[ds.length-1]):'—','latest event date','')+'</div></div>'; }
+    else h+='<div style="margin-top:12px">'+(u?dashboardHtml(evs,u.name,false):'')+'</div>';
     if(evs.length) h+='<div class="card" style="margin-top:12px"><h3>All events of '+esc(u.name)+'</h3>'+[...evs].sort((a,b)=>evDate(b)-evDate(a)).map(e=>evRow(e)).join('')+'</div>';
   }
   if(t==='flags'){
@@ -1075,6 +1142,116 @@ async function renderAdmin(main){
   const oa=$('#olAdd'); if(oa) oa.onclick=async()=>{ const v=$('#olVal').value.trim(); if(!v) return; try{ const r=await call('adminOption',{op:'add',list:$('#olList').value,value:v}); S.admin.options=r.options; S.options=r.options; renderAdmin(main); }catch(e){ toast(e.message); } };
   main.querySelectorAll('[data-set]').forEach(g=>g.onclick=async ev=>{ const b=ev.target.closest('button'); if(!b) return; try{ const r=await call('adminSettings',{key:g.dataset.set,value:b.dataset.v}); S.admin.settings=r.settings; renderAdmin(main); toast('Saved'); }catch(e){ toast(e.message); } });
   const sm=$('#stMailSave'); if(sm) sm.onclick=async()=>{ try{ const r=await call('adminSettings',{key:'NOTIFY_EMAIL',value:$('#stMail').value.trim()}); S.admin.settings=r.settings; toast('Saved'); }catch(e){ toast(e.message); } };
+}
+
+/* ============================ privacy screens ============================ */
+const PV={mode:'',err:'',busy:false};
+function privacyCards(sel){
+  const card=(v,t,b,pts)=>'<button type="button" class="emo" data-pv="'+v+'" aria-pressed="'+(sel===v)+'" style="width:100%;margin-top:8px"><b style="font-size:15px">'+t+'</b><div class="bn ink2" style="font-size:12.5px;margin:2px 0 6px">'+b+'</div><ul style="margin:0;padding-left:18px;font-size:13px;color:var(--ink2)">'+pts.map(x=>'<li>'+x+'</li>').join('')+'</ul></button>';
+  return card('shared','Shared with admin','শেয়ারড — আপনি ও অ্যাডমিন',['You and the admin can read your entries','Admin can review your dashboard and give guidance','No passphrase to remember'])+
+    card('private','🔒 Private — only me','প্রাইভেট — শুধু আপনি',['Entries are locked on your device with your own passphrase','Nobody else can read them — not the admin, not anyone with the database','<b>If you forget the passphrase, your entries cannot be recovered</b>']);
+}
+function passFields(){ return '<label class="f">Choose a passphrase <span class="bn">পাসফ্রেজ</span></label><input class="in" id="pv1" type="password" autocomplete="new-password" placeholder="At least 8 characters — a short sentence is best">'+
+  '<label class="f">Type it again</label><input class="in" id="pv2" type="password" autocomplete="new-password">'+
+  '<label class="row" style="margin-top:10px;font-size:13.5px;gap:8px;align-items:flex-start;flex-wrap:nowrap"><input type="checkbox" id="pvAck" style="margin-top:3px"> <span>I understand that if I forget this passphrase, nobody can unlock my entries — not even the admin.</span></label>'+
+  '<label class="row" style="margin-top:8px;font-size:13.5px;gap:8px"><input type="checkbox" id="pvRem"> Remember on this device (skip the passphrase here)</label>'; }
+function readPass(){ const a=($('#pv1')||{}).value||'', b=($('#pv2')||{}).value||'';
+  if(a.length<8) return [null,'Passphrase must be at least 8 characters.']; if(a!==b) return [null,'The two passphrases do not match.'];
+  if(!($('#pvAck')||{}).checked) return [null,'Please tick the box to confirm you understand.']; return [a,'']; }
+async function goPrivate(pass,remember){
+  const salt=CR.newSalt(); const key=await CR.derive(pass,salt); const check=JSON.stringify(await CR.encrypt(key,KEY_CHECK));
+  const sealed=[]; for(const e of S.events) sealed.push(await sealEvent(e,key));
+  await call('setPrivacy',{mode:'private',encSalt:salt,encCheck:check,events:sealed});
+  Object.assign(S.user,{privacy:'private',encSalt:salt,encCheck:check}); S.key=key; await rememberKey(key,remember);
+}
+async function goShared(){
+  const plain=S.events.map(e=>{ const c=Object.assign({},e); delete c._enc; return c; });
+  await call('setPrivacy',{mode:'shared',events:plain});
+  forgetKey(); Object.assign(S.user,{privacy:'shared',encSalt:'',encCheck:''});
+}
+function renderPrivacy(mode){
+  if(mode) PV.mode=mode; document.body.classList.add('authmode');
+  const brand='<div class="brand"><span class="ar">قَلْب</span><h1>QALB</h1></div>';
+  let h='';
+  if(PV.mode==='choose'){
+    const sel=PV.sel||'';
+    h=brand+'<h2>Who can read your entries?</h2><p class="ink2" style="font-size:13.5px;margin:4px 0 0">Choose once. You can change it later from the Privacy page.'+(S.raw&&S.raw.length?' Your '+S.raw.length+' existing entries will follow your choice.':'')+'</p>'+
+      privacyCards(sel)+(sel==='private'?passFields():'')+'<div class="err">'+esc(PV.err)+'</div>'+
+      '<button class="btn block" id="pvGo" '+(!sel||PV.busy?'disabled':'')+'>'+(PV.busy?'Securing your entries…':sel==='private'?'Lock my entries — Private':'Continue — Shared')+'</button>'+
+      '<button class="linkbtn" id="pvOut" style="margin-top:8px">Log out</button>';
+  }
+  if(PV.mode==='unlock'){
+    h=brand+'<h2>🔒 Unlock your entries</h2><p class="ink2" style="font-size:13.5px">Your account is Private. Enter your passphrase — it never leaves this device.</p>'+
+      '<label class="f">Passphrase</label><input class="in" id="pvU" type="password" autocomplete="current-password">'+
+      '<label class="row" style="margin-top:10px;font-size:13.5px;gap:8px"><input type="checkbox" id="pvRem"> Remember on this device</label>'+
+      '<div class="err">'+esc(PV.err)+'</div><button class="btn block" id="pvUnlock" '+(PV.busy?'disabled':'')+'>'+(PV.busy?'Unlocking…':'Unlock')+'</button>'+
+      '<div class="row between" style="margin-top:10px"><button class="linkbtn" id="pvOut">Log out</button><button class="linkbtn" id="pvForgot">Forgot passphrase?</button></div>';
+  }
+  if(PV.mode==='forgot'){
+    h=brand+'<h2>Forgot your passphrase</h2><div class="check mismatch"><h4>This cannot be undone</h4><ul><li>Nobody can recover a private passphrase — not the admin, not us.</li><li>Starting over <b>permanently removes</b> all '+((S.raw||[]).length)+' of your locked entries.</li><li>If you saved a recovery file earlier, you can restore it afterwards — but only with the passphrase it was made with.</li></ul></div>'+
+      '<label class="f">Type DELETE to start over</label><input class="in" id="pvDel" autocomplete="off">'+
+      '<div class="err">'+esc(PV.err)+'</div><button class="btn danger block" id="pvReset" '+(PV.busy?'disabled':'')+'>Remove my locked entries and start over</button>'+
+      '<button class="linkbtn" id="pvBack" style="margin-top:8px">← Back — I’ll try my passphrase again</button>';
+  }
+  if(PV.mode==='nocrypto') h=brand+'<h2>Browser not supported</h2><p class="ink2">This browser cannot unlock private entries. Please open the link in an up-to-date Chrome, Safari, Edge or Firefox.</p><button class="linkbtn" id="pvOut">Log out</button>';
+  $('#app').innerHTML='<div class="auth"><div class="box">'+h+'</div></div>';
+  const q=x=>$(x);
+  $$('[data-pv]').forEach(b=>b.onclick=()=>{ PV.sel=b.dataset.pv; PV.err=''; renderPrivacy(); });
+  if(q('#pvOut')) q('#pvOut').onclick=async()=>{ try{ await call('logout'); }catch(e){} forgetKey(); logoutLocal(); };
+  if(q('#pvGo')) q('#pvGo').onclick=async()=>{
+    PV.err=''; let pass=null;
+    if(PV.sel==='private'){ if(!CR.ok()){ PV.err='This browser cannot encrypt. Use an up-to-date browser, or choose Shared.'; return renderPrivacy(); }
+      const [p,err]=readPass(); if(err){ PV.err=err; return renderPrivacy(); } pass=p; }
+    const rem=q('#pvRem')&&q('#pvRem').checked; PV.busy=true; renderPrivacy();
+    try{ await loadEvents(S.raw); if(PV.sel==='private') await goPrivate(pass,rem); else { await call('setPrivacy',{mode:'shared',events:[]}); S.user.privacy='shared'; }
+      PV.busy=false; PV.sel=''; document.body.classList.remove('authmode'); $('#app').innerHTML=''; route(); toast(isPriv()?'🔒 Private — only you can read your entries':'Shared with admin'); }
+    catch(e){ PV.busy=false; PV.err=e.message; renderPrivacy(); } };
+  if(q('#pvUnlock')){ const go=async()=>{ const pass=q('#pvU').value; if(!pass){ PV.err='Enter your passphrase.'; return renderPrivacy(); } const rem=q('#pvRem').checked; PV.busy=true; PV.err=''; renderPrivacy();
+      try{ const key=await CR.derive(pass,S.user.encSalt); if(!(await verifyKey(key))){ PV.busy=false; PV.err='That passphrase is not correct.'; return renderPrivacy(); }
+        S.key=key; await rememberKey(key,rem); PV.busy=false; boot(); }catch(e){ PV.busy=false; PV.err=e.message; renderPrivacy(); } };
+    q('#pvUnlock').onclick=go; q('#pvU').onkeydown=e=>{ if(e.key==='Enter') go(); }; q('#pvU').focus(); }
+  if(q('#pvForgot')) q('#pvForgot').onclick=()=>{ PV.err=''; renderPrivacy('forgot'); };
+  if(q('#pvBack')) q('#pvBack').onclick=()=>{ PV.err=''; renderPrivacy('unlock'); };
+  if(q('#pvReset')) q('#pvReset').onclick=async()=>{ if(q('#pvDel').value.trim()!=='DELETE'){ PV.err='Type DELETE in capitals to confirm.'; return renderPrivacy(); }
+    PV.busy=true; renderPrivacy(); try{ await call('privacyReset'); forgetKey(); S.user.privacy=''; S.raw=[]; S.events=[]; PV.busy=false; renderPrivacy('choose'); toast('Old locked entries removed. Choose again.'); }
+    catch(e){ PV.busy=false; PV.err=e.message; renderPrivacy(); } };
+}
+function renderPrivacyPage(main){
+  const priv=isPriv();
+  let h='<div class="card"><h2>Privacy <span class="bn mute" style="font-size:14px;font-weight:400">গোপনীয়তা</span></h2>'+
+    '<div class="check '+(priv?'fit':'unchecked')+'"><h4>'+(priv?'🔒 Private — only you can read your entries':'Shared — you and the admin can read your entries')+'</h4><div style="font-size:13.5px">'+
+    (priv?'Every entry is encrypted on this device before it is saved. The database only holds locked text plus each event’s date and status. The admin sees that you have '+S.events.length+' entries, but not what they say.'
+         :'Your entries are stored readable in the admin’s private Google Sheet so the admin can review your dashboard and guide you.')+'</div></div>';
+  if(priv){
+    h+='<h3 style="margin-top:18px">Recovery file</h3><p class="hint">A backup of all your entries, still locked with your passphrase. Keep it somewhere safe (Google Drive, email to yourself). It can restore your entries if they are ever removed — it does <b>not</b> help if you forget the passphrase.</p>'+
+      '<div class="row"><button class="btn soft" id="pvExp">⬇ Download recovery file</button><label class="btn ghost" style="cursor:pointer">⬆ Restore from file<input type="file" id="pvImp" accept=".json,application/json" hidden></label></div>'+
+      '<h3 style="margin-top:18px">This device</h3><div class="row"><button class="btn ghost" id="pvLock">Lock now (forget passphrase on this device)</button></div>'+
+      '<h3 style="margin-top:18px">Switch to Shared</h3><p class="hint">Unlocks all your entries and stores them readable for the admin.</p><button class="btn ghost" id="pvToShared">Switch to Shared…</button>';
+  } else {
+    h+='<h3 style="margin-top:18px">Switch to Private</h3><p class="hint">Locks all '+S.events.length+' of your entries with a passphrase only you know. Earlier edit-history details on the server are cleared.</p>'+
+      '<div id="pvForm" class="hidden">'+passFields()+'<div class="err" id="pvErr"></div><button class="btn block" id="pvDo">Lock my entries — Private</button></div>'+
+      '<button class="btn" id="pvShow">Switch to Private…</button>';
+  }
+  h+='</div>'; main.innerHTML=h;
+  const q=x=>$(x);
+  if(q('#pvShow')) q('#pvShow').onclick=()=>{ q('#pvForm').classList.remove('hidden'); q('#pvShow').classList.add('hidden'); };
+  if(q('#pvDo')) q('#pvDo').onclick=async()=>{ if(!CR.ok()){ q('#pvErr').textContent='This browser cannot encrypt.'; return; } const [pass,err]=readPass(); if(err){ q('#pvErr').textContent=err; return; }
+    const b=q('#pvDo'); b.disabled=true; b.textContent='Locking '+S.events.length+' entries…';
+    try{ await goPrivate(pass,q('#pvRem').checked); $('#app').innerHTML=''; route(); toast('🔒 Private — only you can read your entries'); }catch(e){ b.disabled=false; b.textContent='Lock my entries — Private'; q('#pvErr').textContent=e.message; } };
+  if(q('#pvToShared')) q('#pvToShared').onclick=async()=>{ if(!confirmBox('Switch to Shared? All your entries will be unlocked and readable by the admin.')) return;
+    try{ await goShared(); $('#app').innerHTML=''; route(); toast('Switched to Shared'); }catch(e){ toast(e.message,5000); } };
+  if(q('#pvLock')) q('#pvLock').onclick=()=>{ forgetKey(); S.events=[]; renderPrivacy('unlock'); };
+  if(q('#pvExp')) q('#pvExp').onclick=async()=>{ const sealed=[]; for(const e of S.events) sealed.push(Object.assign(await sealEvent(e),{createdAt:e.createdAt}));
+    const file={app:'QALB',kind:'recovery',v:1,made:new Date().toISOString(),name:S.user.name,encSalt:S.user.encSalt,encCheck:S.user.encCheck,events:sealed};
+    const blob=new Blob([JSON.stringify(file)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='QALB_recovery_'+todayISO()+'.json'; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500); toast('Recovery file downloaded'); };
+  if(q('#pvImp')) q('#pvImp').onchange=async ev=>{ const f=ev.target.files[0]; if(!f) return; let data;
+    try{ data=JSON.parse(await f.text()); if(data.kind!=='recovery'||!data.encSalt) throw 0; }catch(e){ toast('That is not a QALB recovery file.'); return; }
+    let key=null;
+    if(data.encSalt===S.user.encSalt) key=S.key; else { const pass=prompt('Passphrase used when this recovery file was made:'); if(!pass) return; key=await CR.derive(pass,data.encSalt); }
+    try{ if((await CR.decrypt(key,JSON.parse(data.encCheck)))!==KEY_CHECK) throw 0; }catch(e){ toast('Wrong passphrase for this file.'); return; }
+    const have=new Set(S.events.map(e=>e.id)); let n=0, skip=0;
+    for(const r of data.events||[]){ if(have.has(r.id)){ skip++; continue; } try{ const e=await openEvent(r,key); delete e.id; delete e.userId; await saveEv(e); n++; }catch(e){ skip++; } }
+    toast('Restored '+n+' entr'+(n===1?'y':'ies')+(skip?' · '+skip+' already present or unreadable':''),5000); route(); };
 }
 
 /* ============================ start ============================ */
