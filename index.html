@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0f3d3a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="QALB">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>QALB — Emotion & Event Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Noto+Sans+Bengali:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -431,6 +438,30 @@ const Demo=(()=>{
   return {handle(p){ return new Promise((res,rej)=>setTimeout(()=>{ const db=load(); try{ const f=A[p.action]; if(!f||p.action[0]==='_') throw new Error('Unknown action'); const out=f(p,db); save(db); res(clone(out)); }catch(e){ rej(e); } },120)); }};
 })();
 
+/* ============================ install as app ============================ */
+const INST={evt:null};
+const isStandalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
+const ua=navigator.userAgent||'';
+const isIOS=/iPhone|iPad|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+const inAppBrowser=/FBAN|FBAV|Instagram|Line\/|WhatsApp|Messenger|GSA\//.test(ua);
+addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); INST.evt=e; $$('[data-install]').forEach(b=>b.classList.remove('hidden')); });
+addEventListener('appinstalled',()=>{ INST.evt=null; toast('QALB is on your home screen'); $$('[data-install]').forEach(b=>b.classList.add('hidden')); });
+if('serviceWorker' in navigator && location.protocol==='https:') addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+const installBtn=(cls)=>isStandalone()?'':'<button type="button" class="'+(cls||'btn ghost block')+'" data-install>📲 Install app <span class="bn" style="font-weight:400">· অ্যাপ হিসেবে রাখুন</span></button>';
+async function doInstall(){
+  if(INST.evt){ INST.evt.prompt(); try{ await INST.evt.userChoice; }catch(e){} INST.evt=null; return; }
+  const step=(n,t)=>'<li style="margin:6px 0">'+t+'</li>';
+  let h='<h3>Install QALB on this '+(isIOS?'iPhone':'device')+'</h3>';
+  if(isIOS&&(inAppBrowser||!/Safari/.test(ua)||/CriOS|FxiOS|EdgiOS/.test(ua)))
+    h+='<div class="note">On iPhone this only works in <b>Safari</b>. Copy the link, open Safari, paste it, then follow the steps below.</div><button class="btn soft block" id="cpLink" style="margin-top:8px">Copy link</button>';
+  if(isIOS) h+='<ol style="padding-left:20px;font-size:14.5px">'+step(1,'Tap the <b>Share</b> button <span style="font-size:18px">⎋</span> (square with an arrow) at the bottom of Safari.')+step(2,'Scroll down and tap <b>Add to Home Screen</b>.')+step(3,'Tap <b>Add</b>. Open QALB from the new icon.')+'</ol><div class="hint bn">Safari → Share → Add to Home Screen → Add</div>';
+  else h+='<ol style="padding-left:20px;font-size:14.5px">'+step(1,'Tap the <b>⋮ menu</b> at the top right of Chrome (on a computer: the install icon at the right of the address bar).')+step(2,'Tap <b>Add to Home screen</b> or <b>Install app</b>.')+step(3,'Tap <b>Install</b>. Open QALB from the new icon.')+'</ol><div class="hint bn">Chrome → ⋮ → Add to Home screen → Install</div>'+
+    (inAppBrowser?'<div class="note">You are inside another app’s browser. Open the link in <b>Chrome</b> first.</div><button class="btn soft block" id="cpLink" style="margin-top:8px">Copy link</button>':'');
+  h+='<button class="btn block" style="margin-top:14px" id="instOk">OK</button>';
+  modal(h,sh=>{ sh.querySelector('#instOk').onclick=closeModal; const c=sh.querySelector('#cpLink'); if(c) c.onclick=async()=>{ try{ await navigator.clipboard.writeText(location.origin+location.pathname); toast('Link copied'); }catch(e){ toast(location.origin+location.pathname,6000); } }; });
+}
+document.addEventListener('click',e=>{ if(e.target.closest('[data-install]')) doInstall(); });
+
 /* ============================ privacy / encryption ============================
    Private users: every entry is encrypted in this browser with AES-GCM-256.
    The key comes from the user's passphrase (PBKDF2-SHA256, 210,000 rounds) and never leaves the device. */
@@ -492,7 +523,7 @@ function renderAuth(step){
   if(AU.step==='welcome'){
     h=brand+'<p class="ink2" style="font-size:14px;text-align:center">Record what happened, what you felt, and what the Qur’an says about that feeling.</p>'+
       '<button class="btn block" data-go="login" style="margin-top:14px">Log in with PIN</button>'+
-      '<button class="btn ghost block" data-go="register" style="margin-top:8px">First time? Register</button>';
+      '<button class="btn ghost block" data-go="register" style="margin-top:8px">First time? Register</button>'+(isStandalone()?'':'<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">'+installBtn('btn soft block')+'</div>');
   }
   if(AU.step==='register'||AU.step==='forgot'){
     const reg=AU.step==='register';
@@ -927,7 +958,8 @@ function exportEvents(list,name){
 }
 
 /* ============================ dashboard ============================ */
-function renderHome(main){ main.innerHTML=dashboardHtml(S.events,S.user.name,true); wireDash(main); }
+function renderHome(main){ const tip=!isStandalone()&&!LS.get('instHide',false)?'<div class="card" style="display:flex;gap:10px;align-items:center;margin-bottom:12px;padding:12px 14px"><span style="font-size:24px">📲</span><div style="flex:1;font-size:14px"><b>Put QALB on your home screen</b><div class="hint" style="margin:0">Opens full-screen like an app. Free, no app store.</div></div><button class="btn sm" data-install>Install</button><button class="btn sm ghost" id="instHide" aria-label="Hide">✕</button></div>':'';
+  main.innerHTML=tip+dashboardHtml(S.events,S.user.name,true); wireDash(main); const ih=$('#instHide'); if(ih) ih.onclick=()=>{ LS.set('instHide',true); renderHome(main); }; }
 function dashboardHtml(evs,name,own){
   const n=evs.length;
   if(!n) return '<div class="card"><h2>Assalamu alaikum, '+esc(name.split(' ')[0])+'</h2><p class="ink2">Nothing recorded yet. Each event you record builds this dashboard: what you feel most, what triggers it, who and where it involves, how it changes after reflection — and what the Qur’an says about each feeling.</p><button class="btn" onclick="go(\'new\')">+ Record the first event</button></div>'+quranTeaser();

@@ -1,0 +1,17 @@
+{
+  "name": "QALB — Emotion & Event Console",
+  "short_name": "QALB",
+  "description": "Record what happened, what you felt, and what the Qur'an says about that feeling.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f3d3a",
+  "theme_color": "#0f3d3a",
+  "lang": "en",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
